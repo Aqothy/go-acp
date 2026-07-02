@@ -437,3 +437,44 @@ func TestPromptFailureDeliversStopWithError(t *testing.T) {
 	}
 }
 
+// TestCloseDoesNotWaitForAbandonedCall pins the shutdown contract: a call whose
+// Await ctx was cancelled while the peer never answers must not keep
+// Connection.Close waiting for idle forever.
+func TestCloseDoesNotWaitForAbandonedCall(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	parked := make(chan struct{})
+	release := make(chan struct{})
+	agent := acp.Agent()
+	acp.RegisterAgentRequest(agent, schema.AgentMethodSessionPrompt, func(ctx context.Context, req acp.AgentRequest[schema.PromptRequest]) (schema.PromptResponse, error) {
+		close(parked)
+		<-release // ignores $/cancel_request; answers only once the test lets it
+		return schema.PromptResponse{}, acp.RequestCancelledError(nil)
+	})
+	client := acp.Client()
+	clientConn, agentConn, err := client.ConnectAgent(ctx, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agentConn.Close()
+	defer close(release) // unpark the handler so agentConn.Close can drain it
+
+	callCtx, stopCall := context.WithCancel(ctx)
+	awaited := make(chan struct{})
+	go func() {
+		defer close(awaited)
+		_, _ = clientConn.Agent().Prompt(callCtx, schema.PromptRequest{SessionID: "s", Prompt: []schema.ContentBlock{schema.TextBlock("park")}})
+	}()
+	<-parked
+	stopCall()
+	<-awaited
+
+	closed := make(chan error, 1)
+	go func() { closed <- clientConn.Close() }()
+	select {
+	case <-closed:
+	case <-ctx.Done():
+		t.Fatal("Close hung waiting for the abandoned call")
+	}
+}

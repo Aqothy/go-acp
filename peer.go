@@ -12,41 +12,26 @@ type rpcCaller struct {
 }
 
 // request issues the call with a non-cancelable context so the outbound write
-// always completes, then relays ctx cancellation to the peer as a
-// $/cancel_request notification while waiting for the response.
+// always completes. When the caller abandons a still-unanswered call (ctx
+// cancelled before a response), the cancellation is relayed to the peer as an
+// advisory $/cancel_request and the call is retired locally so connection
+// shutdown does not wait forever on a peer that never answers.
 func (c rpcCaller) request(ctx context.Context, method schema.Method, params any, result any) error {
 	call := c.conn.Call(context.WithoutCancel(ctx), string(method), params)
-	stop := watchCancellation(ctx, c.conn, call.ID())
-	defer stop()
-	return call.Await(ctx, result)
+	err := call.Await(ctx, result)
+	if err != nil && ctx.Err() != nil && !call.IsReady() {
+		c.conn.Retire(call, err)
+		// Send the advisory cancel off the caller's goroutine so an abandoned
+		// call returns immediately even when the writer is busy.
+		go func() {
+			_ = c.conn.Notify(context.Background(), string(schema.ProtocolMethodCancelRequest), schema.CancelRequestNotification{RequestID: call.ID().Raw()})
+		}()
+	}
+	return err
 }
 
 func (c rpcCaller) notify(ctx context.Context, method schema.Method, params any) error {
 	return c.conn.Notify(ctx, string(method), params)
-}
-
-func watchCancellation(ctx context.Context, conn *jsonrpc2.Connection, id jsonrpc2.ID) func() {
-	if ctx == nil || ctx.Done() == nil {
-		return func() {}
-	}
-	done := make(chan struct{})
-	sendCancel := func() {
-		_ = conn.Notify(context.Background(), string(schema.ProtocolMethodCancelRequest), schema.CancelRequestNotification{RequestID: id.Raw()})
-	}
-	select {
-	case <-ctx.Done():
-		sendCancel()
-		return func() {}
-	default:
-	}
-	go func() {
-		select {
-		case <-ctx.Done():
-			sendCancel()
-		case <-done:
-		}
-	}()
-	return func() { close(done) }
 }
 
 func requestValue[R any](ctx context.Context, caller rpcCaller, method schema.Method, params any) (R, error) {
