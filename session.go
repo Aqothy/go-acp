@@ -16,6 +16,7 @@ type ActiveSessionMessageKind string
 const (
 	ActiveSessionMessageUpdate ActiveSessionMessageKind = "session_update"
 	ActiveSessionMessageStop   ActiveSessionMessageKind = "stop"
+	ActiveSessionMessageMarker ActiveSessionMessageKind = "marker"
 )
 
 type ActiveSessionMessage struct {
@@ -24,6 +25,12 @@ type ActiveSessionMessage struct {
 	Update       schema.SessionUpdate
 	Response     schema.PromptResponse
 	StopReason   schema.StopReason
+	// Err is set on a Stop message whose prompt failed. A NextUpdate error, by
+	// contrast, always means the stream itself terminated (disposed, connection
+	// closed, or ctx done).
+	Err error
+	// Marker is the tag passed to PushMarker for Marker messages.
+	Marker string
 }
 
 type activeSessionEvent struct {
@@ -235,6 +242,14 @@ func (c *AgentPeer) attachSession(resp schema.NewSessionResponse) *ActiveSession
 	return s
 }
 
+// AttachSession attaches to an existing session by id, subscribing to its
+// session/update stream. Use it for sessions the agent already knows about
+// (session/load, session/resume): attach BEFORE issuing the load/resume call so
+// notifications replayed while the call is in flight are queued in order.
+func (c *AgentPeer) AttachSession(id schema.SessionId) *ActiveSession {
+	return c.attachSession(schema.NewSessionResponse{SessionID: id})
+}
+
 func (s *ActiveSession) SessionID() schema.SessionId                   { return s.response.SessionID }
 func (s *ActiveSession) NewSessionResponse() schema.NewSessionResponse { return s.response }
 
@@ -274,13 +289,13 @@ func (s *ActiveSession) PromptAsync(ctx context.Context, prompt any) *PromptCall
 		defer close(done)
 		request, err := s.promptRequest(prompt)
 		if err != nil {
-			s.updates.push(activeSessionEvent{err: err})
+			s.updates.push(activeSessionEvent{msg: ActiveSessionMessage{Kind: ActiveSessionMessageStop, Err: err}})
 			done <- promptResult{err: err}
 			return
 		}
 		resp, err := s.agent.Prompt(ctx, request)
 		if err != nil {
-			s.updates.push(activeSessionEvent{err: err})
+			s.updates.push(activeSessionEvent{msg: ActiveSessionMessage{Kind: ActiveSessionMessageStop, Err: err}})
 			done <- promptResult{err: err}
 			return
 		}
@@ -288,6 +303,16 @@ func (s *ActiveSession) PromptAsync(ctx context.Context, prompt any) *PromptCall
 		done <- promptResult{response: resp}
 	}()
 	return &PromptCall{done: done}
+}
+
+// PushMarker enqueues an application-defined marker delivered in order after
+// every update already routed to this session. Because updates are routed
+// synchronously on the read loop before any later message is read, pushing a
+// marker right after a request (session/load, session/resume) resolves gives
+// an in-stream barrier: everything the agent sent before responding is
+// guaranteed to be dequeued before the marker.
+func (s *ActiveSession) PushMarker(tag string) {
+	s.updates.push(activeSessionEvent{msg: ActiveSessionMessage{Kind: ActiveSessionMessageMarker, Marker: tag}})
 }
 
 func (s *ActiveSession) Prompt(ctx context.Context, prompt any) (schema.PromptResponse, error) {
@@ -313,7 +338,7 @@ func (s *ActiveSession) ReadText(ctx context.Context) (string, error) {
 			return out, err
 		}
 		if msg.Kind == ActiveSessionMessageStop {
-			return out, nil
+			return out, msg.Err
 		}
 		if text, ok := msg.Update.TextChunk(); ok && msg.Update.SessionUpdate == schema.SessionUpdateAgentMessageChunk {
 			out += text

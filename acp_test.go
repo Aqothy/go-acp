@@ -332,3 +332,108 @@ func TestWebSocketTransportStreamsSessionUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestAttachSessionMarkerBarriersLoadReplay pins the load/resume consumption
+// contract: attach by id BEFORE session/load so replayed updates are queued in
+// order, and a marker pushed after the load resolves is delivered only after
+// every replayed update.
+func TestAttachSessionMarkerBarriersLoadReplay(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	const replayed = 200
+
+	agent := acp.Agent()
+	acp.RegisterAgentRequest(agent, schema.AgentMethodSessionLoad, func(ctx context.Context, req acp.AgentRequest[schema.LoadSessionRequest]) (schema.LoadSessionResponse, error) {
+		for range replayed {
+			err := req.Client.SessionUpdate(ctx, schema.SessionNotification{
+				SessionID: req.Params.SessionID,
+				Update: schema.SessionUpdate{
+					SessionUpdate: schema.SessionUpdateAgentMessageChunk,
+					Content:       schema.TextBlock("r"),
+				},
+			})
+			if err != nil {
+				return schema.LoadSessionResponse{}, err
+			}
+		}
+		return schema.LoadSessionResponse{}, nil
+	})
+
+	client := acp.Client()
+	clientConn, agentConn, err := client.ConnectAgent(ctx, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+	defer agentConn.Close()
+
+	session := clientConn.Agent().AttachSession("session-replay")
+	defer session.Dispose()
+
+	if _, err := clientConn.Agent().LoadSession(ctx, schema.LoadSessionRequest{SessionID: "session-replay", CWD: "/tmp/project", MCPServers: []schema.McpServer{}}); err != nil {
+		t.Fatal(err)
+	}
+	session.PushMarker("loaded")
+
+	got := 0
+	for {
+		msg, err := session.NextUpdate(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if msg.Kind == acp.ActiveSessionMessageMarker {
+			if msg.Marker != "loaded" {
+				t.Fatalf("unexpected marker: %q", msg.Marker)
+			}
+			break
+		}
+		got++
+	}
+	if got != replayed {
+		t.Fatalf("marker overtook replayed updates: got %d updates before marker, want %d", got, replayed)
+	}
+}
+
+// TestPromptFailureDeliversStopWithError pins that a failed prompt surfaces as
+// an in-stream Stop message carrying the error, while NextUpdate errors remain
+// reserved for stream termination.
+func TestPromptFailureDeliversStopWithError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	agent := acp.Agent()
+	acp.RegisterAgentRequest(agent, schema.AgentMethodSessionNew, func(ctx context.Context, req acp.AgentRequest[schema.NewSessionRequest]) (schema.NewSessionResponse, error) {
+		return schema.NewSessionResponse{SessionID: "session-err"}, nil
+	})
+	acp.RegisterAgentRequest(agent, schema.AgentMethodSessionPrompt, func(ctx context.Context, req acp.AgentRequest[schema.PromptRequest]) (schema.PromptResponse, error) {
+		return schema.PromptResponse{}, acp.ResourceNotFoundError("session gone")
+	})
+
+	client := acp.Client()
+	clientConn, agentConn, err := client.ConnectAgent(ctx, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+	defer agentConn.Close()
+
+	session, err := clientConn.Agent().BuildSession("/tmp/project").Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Dispose()
+
+	prompt := session.PromptAsync(ctx, "boom")
+	msg, err := session.NextUpdate(ctx)
+	if err != nil {
+		t.Fatalf("NextUpdate should deliver the failed Stop in-stream, got queue error %v", err)
+	}
+	if msg.Kind != acp.ActiveSessionMessageStop || msg.Err == nil {
+		t.Fatalf("message = %+v, want Stop carrying the prompt error", msg)
+	}
+	if _, err := prompt.Await(ctx); err == nil {
+		t.Fatal("Await should report the prompt error")
+	}
+}
+
