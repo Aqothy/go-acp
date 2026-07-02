@@ -13,6 +13,21 @@ func TextBlock(text string) ContentBlock {
 	return ContentBlock{Type: ContentBlockTypeText, Text: &text}
 }
 
+// ImageBlock returns an image ContentBlock with base64 data and a MIME type.
+func ImageBlock(data string, mimeType string) ContentBlock {
+	return ContentBlock{Type: ContentBlockTypeImage, Data: &data, MimeType: &mimeType}
+}
+
+// AudioBlock returns an audio ContentBlock with base64 data and a MIME type.
+func AudioBlock(data string, mimeType string) ContentBlock {
+	return ContentBlock{Type: ContentBlockTypeAudio, Data: &data, MimeType: &mimeType}
+}
+
+// ResourceLinkBlock returns a resource_link ContentBlock.
+func ResourceLinkBlock(name string, uri string) ContentBlock {
+	return ContentBlock{Type: ContentBlockTypeResourceLink, Name: &name, URI: &uri}
+}
+
 // TextValue returns the text payload for a text content block.
 func (b ContentBlock) TextValue() (string, bool) {
 	if b.Type != ContentBlockTypeText || b.Text == nil {
