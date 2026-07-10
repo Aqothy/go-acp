@@ -285,15 +285,18 @@ func (c *PromptCall) Await(ctx context.Context) (schema.PromptResponse, error) {
 
 func (s *ActiveSession) PromptAsync(ctx context.Context, prompt any) *PromptCall {
 	done := make(chan promptResult, 1)
+	request, err := s.promptRequest(prompt)
+	if err != nil {
+		s.updates.push(activeSessionEvent{msg: ActiveSessionMessage{Kind: ActiveSessionMessageStop, Err: err}})
+		done <- promptResult{err: err}
+		close(done)
+		return &PromptCall{done: done}
+	}
+	call := s.agent.caller.call(ctx, schema.AgentMethodSessionPrompt, request)
 	go func() {
 		defer close(done)
-		request, err := s.promptRequest(prompt)
-		if err != nil {
-			s.updates.push(activeSessionEvent{msg: ActiveSessionMessage{Kind: ActiveSessionMessageStop, Err: err}})
-			done <- promptResult{err: err}
-			return
-		}
-		resp, err := s.agent.Prompt(ctx, request)
+		var resp schema.PromptResponse
+		err := s.agent.caller.await(ctx, call, &resp)
 		if err != nil {
 			s.updates.push(activeSessionEvent{msg: ActiveSessionMessage{Kind: ActiveSessionMessageStop, Err: err}})
 			done <- promptResult{err: err}

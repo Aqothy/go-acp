@@ -17,7 +17,14 @@ type rpcCaller struct {
 // advisory $/cancel_request and the call is retired locally so connection
 // shutdown does not wait forever on a peer that never answers.
 func (c rpcCaller) request(ctx context.Context, method schema.Method, params any, result any) error {
-	call := c.conn.Call(context.WithoutCancel(ctx), string(method), params)
+	return c.await(ctx, c.call(ctx, method, params), result)
+}
+
+func (c rpcCaller) call(ctx context.Context, method schema.Method, params any) *jsonrpc2.PendingCall {
+	return c.conn.Call(context.WithoutCancel(ctx), string(method), params)
+}
+
+func (c rpcCaller) await(ctx context.Context, call *jsonrpc2.PendingCall, result any) error {
 	err := call.Await(ctx, result)
 	if err != nil && ctx.Err() != nil && !call.IsReady() {
 		c.conn.Retire(call, err)

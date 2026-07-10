@@ -2,8 +2,10 @@ package acp_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -237,6 +239,22 @@ type wsPipeEnd struct {
 	once   sync.Once
 }
 
+type promptObservingWS struct {
+	*wsPipeEnd
+	promptWritten chan struct{}
+	once          sync.Once
+}
+
+func (w *promptObservingWS) WriteMessage(ctx context.Context, data []byte) error {
+	var message struct {
+		Method string `json:"method"`
+	}
+	if json.Unmarshal(data, &message) == nil && message.Method == string(schema.AgentMethodSessionPrompt) {
+		w.once.Do(func() { close(w.promptWritten) })
+	}
+	return w.wsPipeEnd.WriteMessage(ctx, data)
+}
+
 func newWSPipe() (*wsPipeEnd, *wsPipeEnd) {
 	a2b := make(chan []byte, 64)
 	b2a := make(chan []byte, 64)
@@ -329,6 +347,44 @@ func TestWebSocketTransportStreamsSessionUpdates(t *testing.T) {
 		return err
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPromptAsyncSubmitsPromptBeforeReturning(t *testing.T) {
+	previousProcs := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(previousProcs)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	agent := acp.Agent().OnPrompt(func(context.Context, acp.AgentRequest[schema.PromptRequest]) (schema.PromptResponse, error) {
+		return schema.PromptResponse{StopReason: schema.StopReasonEndTurn}, nil
+	})
+	agentWS, clientWS := newWSPipe()
+	agentConn, err := agent.ConnectWebSocket(ctx, agentWS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agentConn.Close()
+
+	observed := &promptObservingWS{wsPipeEnd: clientWS, promptWritten: make(chan struct{})}
+	clientConn, err := acp.Client().ConnectWebSocket(ctx, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+
+	session := clientConn.Agent().AttachSession("session-ordering")
+	defer session.Dispose()
+	prompt := session.PromptAsync(ctx, "hello")
+
+	select {
+	case <-observed.promptWritten:
+	default:
+		t.Fatal("PromptAsync returned before session/prompt was submitted")
+	}
+	if _, err := prompt.Await(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
