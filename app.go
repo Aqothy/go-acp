@@ -16,6 +16,10 @@ import (
 type AppOptions struct {
 	OnInternalError     func(error)
 	OnNotificationError func(error)
+	// MaxMessageBytes limits the size of one incoming newline-delimited
+	// message. Zero means jsonrpc2.DefaultMaxMessageBytes (32 MiB); a negative
+	// value means no limit. WebSocket adapters enforce their own read limit.
+	MaxMessageBytes int
 }
 
 type baseConnection struct {
@@ -41,7 +45,8 @@ func (c *baseConnection) Done() <-chan struct{} { return c.done }
 
 type AgentConnection struct {
 	*baseConnection
-	client *ClientPeer
+	client  *ClientPeer
+	prompts activePrompts
 }
 
 // Client is the handle for calling into the connected client.
@@ -147,7 +152,7 @@ func (app *AgentApp) OnConnect(handler func(context.Context, *AgentConnection) e
 
 // Connect serves the app over newline-delimited JSON-RPC, e.g. acp.Stdio().
 func (app *AgentApp) Connect(ctx context.Context, rwc io.ReadWriteCloser) (*AgentConnection, error) {
-	return app.connect(ctx, ndTransport(rwc), true)
+	return app.connect(ctx, ndTransport(rwc, app.options.MaxMessageBytes), true)
 }
 
 // ConnectWebSocket serves the app over a message-oriented WebSocket, one
@@ -172,7 +177,7 @@ func (app *AgentApp) connect(ctx context.Context, t rpcTransport, runHandlers bo
 	conn.rpc = newRPCConnection(ctx, t, app.options, onDone, nil, func(rpc *jsonrpc2.Connection) jsonrpc2.Handler {
 		conn.client = &ClientPeer{caller: rpcCaller{conn: rpc}}
 		return jsonrpc2.HandlerFunc(func(ctx context.Context, req *jsonrpc2.Request) (any, error) {
-			return app.handle(ctx, req, conn.client)
+			return app.handle(ctx, req, conn)
 		})
 	})
 	if runHandlers {
@@ -196,7 +201,7 @@ func (app *AgentApp) runConnectHandlers(ctx context.Context, conn *AgentConnecti
 	return nil
 }
 
-func (app *AgentApp) handle(ctx context.Context, req *jsonrpc2.Request, client *ClientPeer) (any, error) {
+func (app *AgentApp) handle(ctx context.Context, req *jsonrpc2.Request, conn *AgentConnection) (any, error) {
 	method := schema.Method(req.Method)
 	if req.ID.IsValid() {
 		app.mu.RLock()
@@ -205,24 +210,38 @@ func (app *AgentApp) handle(ctx context.Context, req *jsonrpc2.Request, client *
 		if handler == nil {
 			return nil, jsonrpc2.ErrNotHandled
 		}
-		requestClient := *client
+		requestClient := *conn.client
 		requestClient.requestID = req.ID
-		result, err := handler(ctx, req, &requestClient)
-		if err != nil {
-			return nil, err
+		handle := func(ctx context.Context) (any, error) {
+			return handler(ctx, req, &requestClient)
 		}
-		if result == nil && methodReturnsEmptyObject(method) {
-			return struct{}{}, nil
+		if method != schema.AgentMethodSessionPrompt {
+			return dispatchRequest(ctx, method, handle)
 		}
-		return result, nil
+		sessionID, ok := sessionIDParam(req.Params)
+		if !ok {
+			return dispatchRequest(ctx, method, handle)
+		}
+		ctx, done := conn.prompts.start(ctx, sessionID)
+		defer done()
+		result, err := dispatchRequest(ctx, method, handle)
+		if err != nil && errors.Is(context.Cause(ctx), ErrSessionCancelled) {
+			return schema.PromptResponse{StopReason: schema.StopReasonCancelled}, nil
+		}
+		return result, err
+	}
+	if method == schema.AgentMethodSessionCancel {
+		if sessionID, ok := sessionIDParam(req.Params); ok {
+			conn.prompts.cancel(sessionID)
+		}
 	}
 	app.mu.RLock()
 	handler := app.notificationHandlers[method]
 	app.mu.RUnlock()
 	if handler == nil {
-		return nil, jsonrpc2.ErrNotHandled
+		return nil, nil
 	}
-	return nil, handler(ctx, req, client)
+	return nil, handler(ctx, req, conn.client)
 }
 
 type ClientApp struct {
@@ -282,7 +301,7 @@ func (app *ClientApp) OnConnect(handler func(context.Context, *ClientConnection)
 
 // Connect serves the app over newline-delimited JSON-RPC.
 func (app *ClientApp) Connect(ctx context.Context, rwc io.ReadWriteCloser) (*ClientConnection, error) {
-	return app.connect(ctx, ndTransport(rwc), true)
+	return app.connect(ctx, ndTransport(rwc, app.options.MaxMessageBytes), true)
 }
 
 // ConnectWebSocket serves the app over a message-oriented WebSocket, one
@@ -337,12 +356,12 @@ func (app *ClientApp) connect(ctx context.Context, t rpcTransport, runHandlers b
 // tests and embedding an agent in the client binary.
 func (app *ClientApp) ConnectAgent(ctx context.Context, agent *AgentApp) (*ClientConnection, *AgentConnection, error) {
 	clientEnd, agentEnd := net.Pipe()
-	agentConn, err := agent.connect(ctx, ndTransport(agentEnd), false)
+	agentConn, err := agent.connect(ctx, ndTransport(agentEnd, agent.options.MaxMessageBytes), false)
 	if err != nil {
 		closeBoth(clientEnd, agentEnd)
 		return nil, nil, err
 	}
-	clientConn, err := app.connect(ctx, ndTransport(clientEnd), false)
+	clientConn, err := app.connect(ctx, ndTransport(clientEnd, app.options.MaxMessageBytes), false)
 	if err != nil {
 		_ = agentConn.Close()
 		return nil, nil, err
@@ -398,27 +417,41 @@ func (app *ClientApp) handle(ctx context.Context, req *jsonrpc2.Request, agent *
 		}
 		requestAgent := *agent
 		requestAgent.requestID = req.ID
-		result, err := handler(ctx, req, &requestAgent)
-		if err != nil {
-			return nil, err
-		}
-		if result == nil && methodReturnsEmptyObject(method) {
-			return struct{}{}, nil
-		}
-		return result, nil
+		return dispatchRequest(ctx, method, func(ctx context.Context) (any, error) {
+			return handler(ctx, req, &requestAgent)
+		})
 	}
 	app.mu.RLock()
 	handler := app.notificationHandlers[method]
 	app.mu.RUnlock()
 	if handler == nil {
-		// session/update is already consumed by the router; without a
-		// registered handler it is simply not an error.
-		if method == schema.ClientMethodSessionUpdate {
-			return nil, nil
-		}
-		return nil, jsonrpc2.ErrNotHandled
+		// session/update is consumed by the session router; other unknown
+		// notifications (e.g. `_`-prefixed extensions) must be ignored.
+		return nil, nil
 	}
 	return nil, handler(ctx, req, agent)
+}
+
+// dispatchRequest runs a request handler concurrently with later messages.
+// Notifications are still handled one at a time in wire order, and a request
+// handler starts only after every earlier message has been dispatched, but a
+// handler blocked on user input (e.g. a permission prompt) never holds up the
+// rest of the connection.
+func dispatchRequest(ctx context.Context, method schema.Method, handle func(context.Context) (any, error)) (any, error) {
+	jsonrpc2.Async(ctx)
+	result, err := handle(ctx)
+	if err != nil {
+		// A handler that gave up because the peer sent $/cancel_request
+		// answers with the protocol's RequestCancelled error.
+		if cause := context.Cause(ctx); errors.Is(err, context.Canceled) && isRequestCancelled(cause) {
+			return nil, cause
+		}
+		return nil, err
+	}
+	if result == nil && methodReturnsEmptyObject(method) {
+		return struct{}{}, nil
+	}
+	return result, nil
 }
 
 // rpcTransport is a decoded JSON-RPC message stream plus the resource to close
@@ -429,8 +462,8 @@ type rpcTransport struct {
 	closer io.Closer
 }
 
-func ndTransport(rwc io.ReadWriteCloser) rpcTransport {
-	reader, writer := jsonrpc2.NewNdFramer().Frame(rwc)
+func ndTransport(rwc io.ReadWriteCloser, maxMessageBytes int) rpcTransport {
+	reader, writer := jsonrpc2.NdFramer{MaxMessageBytes: maxMessageBytes}.Frame(rwc)
 	return rpcTransport{reader: reader, writer: writer, closer: rwc}
 }
 
@@ -454,7 +487,7 @@ func newRPCConnection(ctx context.Context, t rpcTransport, opts AppOptions, onDo
 				}
 				id, err := jsonrpc2.MakeID(notification.RequestID)
 				if err == nil && conn != nil {
-					conn.Cancel(id)
+					conn.CancelCause(id, RequestCancelledError(map[string]any{"requestId": notification.RequestID}))
 				}
 				return nil, nil
 			}

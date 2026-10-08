@@ -1,4 +1,2 @@
-github.com/Aqothy/jsonrpc2 v0.0.0-20260615194512-f91d08ffd5b2 h1:7ssQVuYll4ooXqtFeKntZUJMigvLGGji0tilzCOkmRs=
-github.com/Aqothy/jsonrpc2 v0.0.0-20260615194512-f91d08ffd5b2/go.mod h1:JYE0H2dW5xBYAFUUF4b/CS/VS/SafdWSz70eIBKTGTM=
-github.com/Aqothy/jsonrpc2 v0.0.0-20260702183250-4711ed453505 h1:qaNaiWBumfAkntvzfSPoxW7bh1zK6z8VaONzp93ZRbk=
-github.com/Aqothy/jsonrpc2 v0.0.0-20260702183250-4711ed453505/go.mod h1:JYE0H2dW5xBYAFUUF4b/CS/VS/SafdWSz70eIBKTGTM=
+github.com/Aqothy/jsonrpc2 v0.0.0-20261008054236-f91ab22fc4e3 h1:MY0Ml5GqEFPliAd0Rg5CBpQd6a08hW2vR1eSmWcwxbM=
+github.com/Aqothy/jsonrpc2 v0.0.0-20261008054236-f91ab22fc4e3/go.mod h1:JYE0H2dW5xBYAFUUF4b/CS/VS/SafdWSz70eIBKTGTM=

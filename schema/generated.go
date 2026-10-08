@@ -81,8 +81,6 @@ const (
 	ClientMethodElicitationCreate        Method = "elicitation/create"
 	ClientMethodFSReadTextFile           Method = "fs/read_text_file"
 	ClientMethodFSWriteTextFile          Method = "fs/write_text_file"
-	ClientMethodMCPConnect               Method = "mcp/connect"
-	ClientMethodMCPDisconnect            Method = "mcp/disconnect"
 	ClientMethodMCPMessage               Method = "mcp/message"
 	ClientMethodSessionRequestPermission Method = "session/request_permission"
 	ClientMethodSessionUpdate            Method = "session/update"
@@ -98,8 +96,6 @@ var ClientMethods = map[string]Method{
 	"elicitation_create":         ClientMethodElicitationCreate,
 	"fs_read_text_file":          ClientMethodFSReadTextFile,
 	"fs_write_text_file":         ClientMethodFSWriteTextFile,
-	"mcp_connect":                ClientMethodMCPConnect,
-	"mcp_disconnect":             ClientMethodMCPDisconnect,
 	"mcp_message":                ClientMethodMCPMessage,
 	"session_request_permission": ClientMethodSessionRequestPermission,
 	"session_update":             ClientMethodSessionUpdate,
@@ -120,9 +116,9 @@ var ProtocolMethods = map[string]Method{
 
 // AcceptNesNotification notification sent when a suggestion is accepted.
 type AcceptNesNotification struct {
-	Meta      map[string]any `json:"_meta,omitempty"`
-	ID        string         `json:"id"`
-	SessionID SessionId      `json:"sessionId"`
+	Meta      map[string]any  `json:"_meta,omitempty"`
+	ID        NesSuggestionId `json:"id"`
+	SessionID SessionId       `json:"sessionId"`
 }
 
 // AgentAuthCapabilities authentication-related capabilities supported by the agent.
@@ -185,11 +181,7 @@ type AudioContent struct {
 	MimeType    string         `json:"mimeType"`
 }
 
-// AuthCapabilities **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Authentication capabilities supported by the client.
+// AuthCapabilities authentication capabilities supported by the client.
 //
 // Advertised during initialization to inform the agent which authentication
 // method types the client can handle. This governs opt-in types that require
@@ -199,41 +191,25 @@ type AuthCapabilities struct {
 	Terminal *bool          `json:"terminal,omitempty"`
 }
 
-// AuthEnvVar **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Describes a single environment variable for an [`AuthMethodEnvVar`] authentication method.
-type AuthEnvVar struct {
-	Meta     map[string]any `json:"_meta,omitempty"`
-	Label    *string        `json:"label,omitempty"`
-	Name     string         `json:"name"`
-	Optional *bool          `json:"optional,omitempty"`
-	Secret   *bool          `json:"secret,omitempty"`
-}
-
 // AuthMethod describes an available authentication method.
 //
 // The `type` field acts as the discriminator in the serialized JSON form.
 // When no `type` is present, the method is treated as `agent`.
 type AuthMethod struct {
-	Meta        map[string]any `json:"_meta,omitempty"`
-	Args        []string       `json:"args,omitempty"`
-	Description *string        `json:"description,omitempty"`
-	Env         RawMessage     `json:"env,omitempty"`
-	ID          AuthMethodId   `json:"id"`
-	Link        *string        `json:"link,omitempty"`
-	Name        string         `json:"name"`
-	Type        *string        `json:"type,omitempty"`
-	Vars        []AuthEnvVar   `json:"vars,omitempty"`
+	Meta        map[string]any    `json:"_meta,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Description *string           `json:"description,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	ID          AuthMethodId      `json:"id"`
+	Name        string            `json:"name"`
+	Type        *string           `json:"type,omitempty"`
 }
 
 const (
-	AuthMethodTypeEnvVar   = "env_var"
 	AuthMethodTypeTerminal = "terminal"
 )
 
-// AuthMethodAgent agent handles authentication itself.
+// AuthMethodAgent agent handles authentication itself through `authenticate`.
 //
 // This is the default authentication method type.
 type AuthMethodAgent struct {
@@ -243,39 +219,23 @@ type AuthMethodAgent struct {
 	Name        string         `json:"name"`
 }
 
-// AuthMethodEnvVar **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Environment variable authentication method.
-//
-// The user provides credentials that the client passes to the agent as environment variables.
-type AuthMethodEnvVar struct {
-	Meta        map[string]any `json:"_meta,omitempty"`
-	Description *string        `json:"description,omitempty"`
-	ID          AuthMethodId   `json:"id"`
-	Link        *string        `json:"link,omitempty"`
-	Name        string         `json:"name"`
-	Vars        []AuthEnvVar   `json:"vars"`
-}
-
 // AuthMethodId typed identifier used for auth method values on the wire.
 type AuthMethodId string
 
-// AuthMethodTerminal **UNSTABLE**
+// AuthMethodTerminal terminal-based authentication method.
 //
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Terminal-based authentication method.
-//
-// The client runs an interactive terminal for the user to authenticate via a TUI.
+// The client runs the configured agent program as a separate interactive
+// process for the user to authenticate via a TUI. Agents MUST advertise this
+// method only when the client enabled its terminal authentication capability.
+// A zero exit status signals success; any other termination signals failure.
+// The client MUST NOT pass this method to `authenticate`.
 type AuthMethodTerminal struct {
-	Meta        map[string]any `json:"_meta,omitempty"`
-	Args        []string       `json:"args,omitempty"`
-	Description *string        `json:"description,omitempty"`
-	Env         RawMessage     `json:"env,omitempty"`
-	ID          AuthMethodId   `json:"id"`
-	Name        string         `json:"name"`
+	Meta        map[string]any    `json:"_meta,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Description *string           `json:"description,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	ID          AuthMethodId      `json:"id"`
+	Name        string            `json:"name"`
 }
 
 // AuthenticateRequest request parameters for the authenticate method.
@@ -319,11 +279,7 @@ type BlobResourceContents struct {
 	URI      string         `json:"uri"`
 }
 
-// BooleanConfigOptionCapabilities **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Capabilities for boolean session configuration options.
+// BooleanConfigOptionCapabilities capabilities for boolean session configuration options.
 //
 // Supplying `{}` means the client supports boolean session configuration options.
 type BooleanConfigOptionCapabilities struct {
@@ -369,6 +325,7 @@ type ClientCapabilities struct {
 	Plan              *PlanCapabilities          `json:"plan,omitempty"`
 	PositionEncodings []PositionEncodingKind     `json:"positionEncodings,omitempty"`
 	Session           *ClientSessionCapabilities `json:"session,omitempty"`
+	Subagents         *SubagentCapabilities      `json:"subagents,omitempty"`
 	Terminal          *bool                      `json:"terminal,omitempty"`
 }
 
@@ -400,14 +357,12 @@ type ClientResponse struct {
 	Result RawMessage `json:"result,omitempty"`
 }
 
-// ClientSessionCapabilities **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Session-related capabilities supported by the client.
+// ClientSessionCapabilities session-related capabilities supported by the client.
 type ClientSessionCapabilities struct {
 	Meta          map[string]any                    `json:"_meta,omitempty"`
+	Compaction    *CompactionCapabilities           `json:"compaction,omitempty"`
 	ConfigOptions *SessionConfigOptionsCapabilities `json:"configOptions,omitempty"`
+	Notices       *NoticeCapabilities               `json:"notices,omitempty"`
 }
 
 // CloseNesRequest request to close an NES session.
@@ -441,11 +396,71 @@ type CloseSessionResponse struct {
 	Meta map[string]any `json:"_meta,omitempty"`
 }
 
-// CompleteElicitationNotification **UNSTABLE**
+// CompactionCapabilities **UNSTABLE**
 //
 // This capability is not part of the spec yet, and may be removed or changed at any point.
 //
-// Notification sent by the agent when a URL-based elicitation is complete.
+// Client support for ID-addressed context compaction updates.
+type CompactionCapabilities struct {
+}
+
+// CompactionId **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// Unique identifier for a context compaction within a session.
+type CompactionId string
+
+// CompactionStatus **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// Lifecycle state of a context compaction.
+type CompactionStatus string
+
+const (
+	CompactionStatusInProgress CompactionStatus = "in_progress"
+	CompactionStatusCompleted  CompactionStatus = "completed"
+	CompactionStatusFailed     CompactionStatus = "failed"
+	CompactionStatusCancelled  CompactionStatus = "cancelled"
+)
+
+// CompactionSummaryChunk **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// A content block appended to the retained summary of an in-progress
+// compaction. Agents send chunks only after an `in_progress` update and before
+// the terminal update for the same ID. Agents MUST only send this update when
+// the Client advertised [`ClientSessionCapabilities::compaction`].
+type CompactionSummaryChunk struct {
+	Meta         map[string]any `json:"_meta,omitempty"`
+	CompactionID CompactionId   `json:"compactionId"`
+	Content      ContentBlock   `json:"content"`
+}
+
+// CompactionUpdate **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// A context compaction upsert. The first update fixes the compaction's
+// timeline position. Later updates with the same ID patch that entity in place.
+// Agents MUST only send this update when the Client advertised
+// [`ClientSessionCapabilities::compaction`].
+//
+// `summary`, `error`, and `_meta` have patch semantics: omission leaves the
+// stored value unchanged, `null` clears it, and a concrete value replaces it.
+// `summary: []` also clears the retained summary. A non-empty summary is only
+// valid with `completed`; `error` is only valid with `failed`.
+type CompactionUpdate struct {
+	Meta         map[string]any   `json:"_meta,omitempty"`
+	CompactionID CompactionId     `json:"compactionId"`
+	Error        *string          `json:"error,omitempty"`
+	Status       CompactionStatus `json:"status"`
+	Summary      []ContentBlock   `json:"summary,omitempty"`
+}
+
+// CompleteElicitationNotification notification sent by the agent when a URL-based elicitation is complete.
 type CompleteElicitationNotification struct {
 	Meta          map[string]any `json:"_meta,omitempty"`
 	ElicitationID ElicitationId  `json:"elicitationId"`
@@ -455,26 +470,6 @@ type CompleteElicitationNotification struct {
 type ConfigOptionUpdate struct {
 	Meta          map[string]any        `json:"_meta,omitempty"`
 	ConfigOptions []SessionConfigOption `json:"configOptions"`
-}
-
-// ConnectMcpRequest **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Request parameters for `mcp/connect`.
-type ConnectMcpRequest struct {
-	Meta  map[string]any `json:"_meta,omitempty"`
-	ACPID McpServerAcpId `json:"acpId"`
-}
-
-// ConnectMcpResponse **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Response to `mcp/connect`.
-type ConnectMcpResponse struct {
-	Meta         map[string]any  `json:"_meta,omitempty"`
-	ConnectionID McpConnectionId `json:"connectionId"`
 }
 
 // Content standard content block (text, images, resources).
@@ -534,11 +529,7 @@ type Cost struct {
 	Currency string         `json:"currency"`
 }
 
-// CreateElicitationRequest **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Request from the agent to elicit structured user input.
+// CreateElicitationRequest request from the agent to elicit structured user input.
 //
 // The agent sends this to the client to request information from the user,
 // either via a form or by directing them to a URL.
@@ -560,15 +551,11 @@ const (
 	CreateElicitationRequestModeURL  = "url"
 )
 
-// CreateElicitationResponse **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Response from the client to an elicitation request.
+// CreateElicitationResponse response from the client to an elicitation request.
 type CreateElicitationResponse struct {
-	Meta    map[string]any `json:"_meta,omitempty"`
-	Action  string         `json:"action"`
-	Content RawMessage     `json:"content,omitempty"`
+	Meta    map[string]any                     `json:"_meta,omitempty"`
+	Action  string                             `json:"action"`
+	Content map[string]ElicitationContentValue `json:"content,omitempty"`
 }
 
 const (
@@ -676,8 +663,8 @@ type Diff struct {
 //
 // Request parameters for `providers/disable`.
 type DisableProviderRequest struct {
-	Meta map[string]any `json:"_meta,omitempty"`
-	ID   string         `json:"id"`
+	Meta       map[string]any `json:"_meta,omitempty"`
+	ProviderID ProviderId     `json:"providerId"`
 }
 
 // DisableProviderResponse **UNSTABLE**
@@ -689,39 +676,12 @@ type DisableProviderResponse struct {
 	Meta map[string]any `json:"_meta,omitempty"`
 }
 
-// DisconnectMcpRequest **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Request parameters for `mcp/disconnect`.
-type DisconnectMcpRequest struct {
-	Meta         map[string]any  `json:"_meta,omitempty"`
-	ConnectionID McpConnectionId `json:"connectionId"`
-}
-
-// DisconnectMcpResponse **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Response to `mcp/disconnect`.
-type DisconnectMcpResponse struct {
-	Meta map[string]any `json:"_meta,omitempty"`
-}
-
-// ElicitationAcceptAction **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// The user accepted the elicitation and provided content.
+// ElicitationAcceptAction the user accepted the elicitation and provided content.
 type ElicitationAcceptAction struct {
-	Content RawMessage `json:"content,omitempty"`
+	Content map[string]ElicitationContentValue `json:"content,omitempty"`
 }
 
-// ElicitationCapabilities **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Elicitation capabilities supported by the client.
+// ElicitationCapabilities elicitation capabilities supported by the client.
 type ElicitationCapabilities struct {
 	Meta map[string]any               `json:"_meta,omitempty"`
 	Form *ElicitationFormCapabilities `json:"form,omitempty"`
@@ -731,20 +691,14 @@ type ElicitationCapabilities struct {
 // ElicitationContentValue allowed wire representations for [`ElicitationContentValue`].
 type ElicitationContentValue any
 
-// ElicitationFormCapabilities **UNSTABLE**
+// ElicitationFormCapabilities form-based elicitation capabilities.
 //
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Form-based elicitation capabilities.
+// Supplying `{}` means the client supports form-based elicitation.
 type ElicitationFormCapabilities struct {
 	Meta map[string]any `json:"_meta,omitempty"`
 }
 
-// ElicitationFormMode **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Form-based elicitation mode where the client renders a form from the provided schema.
+// ElicitationFormMode form-based elicitation mode where the client renders a form from the provided schema.
 type ElicitationFormMode struct {
 	RequestID       RequestId         `json:"requestId,omitempty"`
 	RequestedSchema ElicitationSchema `json:"requestedSchema"`
@@ -752,11 +706,7 @@ type ElicitationFormMode struct {
 	ToolCallID      *ToolCallId       `json:"toolCallId,omitempty"`
 }
 
-// ElicitationId **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Unique identifier for an elicitation.
+// ElicitationId unique identifier for an elicitation.
 type ElicitationId string
 
 // ElicitationPropertySchema property schema for elicitation form fields.
@@ -791,11 +741,7 @@ const (
 	ElicitationPropertySchemaTypeString  = "string"
 )
 
-// ElicitationRequestScope **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Request-scoped elicitation, tied to a specific JSON-RPC request outside of a session
+// ElicitationRequestScope request-scoped elicitation, tied to a specific JSON-RPC request outside of a session
 // (e.g., during auth/configuration phases before any session is started).
 type ElicitationRequestScope struct {
 	RequestID RequestId `json:"requestId"`
@@ -806,12 +752,12 @@ type ElicitationRequestScope struct {
 // This represents a JSON Schema object with primitive-typed properties,
 // as required by the elicitation specification.
 type ElicitationSchema struct {
-	Meta        map[string]any         `json:"_meta,omitempty"`
-	Description *string                `json:"description,omitempty"`
-	Properties  RawMessage             `json:"properties,omitempty"`
-	Required    []string               `json:"required,omitempty"`
-	Title       *string                `json:"title,omitempty"`
-	Type        *ElicitationSchemaType `json:"type,omitempty"`
+	Meta        map[string]any                       `json:"_meta,omitempty"`
+	Description *string                              `json:"description,omitempty"`
+	Properties  map[string]ElicitationPropertySchema `json:"properties,omitempty"`
+	Required    []string                             `json:"required,omitempty"`
+	Title       *string                              `json:"title,omitempty"`
+	Type        *ElicitationSchemaType               `json:"type,omitempty"`
 }
 
 // ElicitationSchemaType type discriminator for elicitation schemas.
@@ -821,11 +767,7 @@ const (
 	ElicitationSchemaTypeObject ElicitationSchemaType = "object"
 )
 
-// ElicitationSessionScope **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Session-scoped elicitation, optionally tied to a specific tool call.
+// ElicitationSessionScope session-scoped elicitation, optionally tied to a specific tool call.
 //
 // When `tool_call_id` is set, the elicitation is tied to a specific tool call.
 // This is useful when an agent receives an elicitation from an MCP server
@@ -835,27 +777,14 @@ type ElicitationSessionScope struct {
 	ToolCallID *ToolCallId `json:"toolCallId,omitempty"`
 }
 
-// ElicitationStringType items definition for untitled multi-select enum properties.
-type ElicitationStringType string
-
-const (
-	ElicitationStringTypeString ElicitationStringType = "string"
-)
-
-// ElicitationUrlCapabilities **UNSTABLE**
+// ElicitationUrlCapabilities uRL-based elicitation capabilities.
 //
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// URL-based elicitation capabilities.
+// Supplying `{}` means the client supports URL-based elicitation.
 type ElicitationUrlCapabilities struct {
 	Meta map[string]any `json:"_meta,omitempty"`
 }
 
-// ElicitationUrlMode **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// URL-based elicitation mode where the client directs the user to a URL.
+// ElicitationUrlMode uRL-based elicitation mode where the client directs the user to a URL.
 type ElicitationUrlMode struct {
 	ElicitationID ElicitationId `json:"elicitationId"`
 	RequestID     RequestId     `json:"requestId,omitempty"`
@@ -880,11 +809,12 @@ type EmbeddedResourceResource struct {
 	URI      string         `json:"uri"`
 }
 
-// EnumOption a titled enum option with a const value and human-readable title.
+// EnumOption a titled enum option with a const value, human-readable title, and optional description.
 type EnumOption struct {
-	Meta  map[string]any `json:"_meta,omitempty"`
-	Const string         `json:"const"`
-	Title string         `json:"title"`
+	Meta        map[string]any `json:"_meta,omitempty"`
+	Const       string         `json:"const"`
+	Description *string        `json:"description,omitempty"`
+	Title       string         `json:"title"`
 }
 
 // EnvVariable an environment variable to set when launching an MCP server.
@@ -921,7 +851,6 @@ const (
 	ErrorCodeRequestCancelled       ErrorCode = -32800
 	ErrorCodeAuthenticationRequired ErrorCode = -32000
 	ErrorCodeResourceNotFound       ErrorCode = -32002
-	ErrorCodeURLElicitationRequired ErrorCode = -32042
 )
 
 // ExtNotification allows the Agent to send an arbitrary notification that is not part of the ACP spec.
@@ -989,6 +918,13 @@ type HttpHeader struct {
 	Meta  map[string]any `json:"_meta,omitempty"`
 	Name  string         `json:"name"`
 	Value string         `json:"value"`
+}
+
+// IdleStateUpdate the child is ready to process another prompt.
+type IdleStateUpdate struct {
+	Meta       map[string]any `json:"_meta,omitempty"`
+	StopReason *StopReason    `json:"stopReason,omitempty"`
+	Usage      *Usage         `json:"usage,omitempty"`
 }
 
 // ImageContent an image provided to or from an LLM.
@@ -1134,7 +1070,7 @@ type LoadSessionResponse struct {
 
 // LogoutCapabilities logout capabilities supported by the agent.
 //
-// By supplying `{}` it means that the agent supports the logout method.
+// Supplying `{}` means the agent supports the logout method.
 type LogoutCapabilities struct {
 	Meta map[string]any `json:"_meta,omitempty"`
 }
@@ -1159,12 +1095,27 @@ type McpCapabilities struct {
 	SSE  *bool          `json:"sse,omitempty"`
 }
 
-// McpConnectionId **UNSTABLE**
+// McpError **UNSTABLE**
+//
+// An inner MCP error, distinct from an outer ACP binding or runtime error.
+//
+// `code` and `message` are required and non-null. `data` is optional;
+// explicit `null` is preserved separately from an omitted key.
+type McpError struct {
+	Code    int64  `json:"code"`
+	Data    any    `json:"data,omitempty"`
+	Message string `json:"message"`
+}
+
+// McpRequestId **UNSTABLE**
 //
 // This capability is not part of the spec yet, and may be removed or changed at any point.
 //
-// A unique identifier for an active MCP-over-ACP connection.
-type McpConnectionId string
+// Identifies an inner MCP request active against a server on this ACP connection.
+//
+// Generated by the caller and preserved unchanged by proxies. This is distinct
+// from the outer ACP JSON-RPC request ID.
+type McpRequestId string
 
 // McpServer configuration for connecting to an MCP (Model Context Protocol) server.
 //
@@ -1173,15 +1124,15 @@ type McpConnectionId string
 //
 // See protocol docs: [MCP Servers](https://agentclientprotocol.com/protocol/session-setup#mcp-servers)
 type McpServer struct {
-	Meta    map[string]any  `json:"_meta,omitempty"`
-	Args    []string        `json:"args,omitempty"`
-	Command *string         `json:"command,omitempty"`
-	Env     []EnvVariable   `json:"env,omitempty"`
-	Headers []HttpHeader    `json:"headers,omitempty"`
-	ID      *McpServerAcpId `json:"id,omitempty"`
-	Name    string          `json:"name"`
-	Type    *string         `json:"type,omitempty"`
-	URL     *string         `json:"url,omitempty"`
+	Meta     map[string]any  `json:"_meta,omitempty"`
+	Args     []string        `json:"args,omitempty"`
+	Command  *string         `json:"command,omitempty"`
+	Env      []EnvVariable   `json:"env,omitempty"`
+	Headers  []HttpHeader    `json:"headers,omitempty"`
+	Name     string          `json:"name"`
+	ServerID *McpServerAcpId `json:"serverId,omitempty"`
+	Type     *string         `json:"type,omitempty"`
+	URL      *string         `json:"url,omitempty"`
 }
 
 const (
@@ -1197,11 +1148,11 @@ const (
 // ACP transport configuration for MCP.
 //
 // The MCP server is provided by an ACP component and communicates over the ACP channel
-// using `mcp/connect`, `mcp/message`, and `mcp/disconnect`.
+// using `mcp/message`.
 type McpServerAcp struct {
-	Meta map[string]any `json:"_meta,omitempty"`
-	ID   McpServerAcpId `json:"id"`
-	Name string         `json:"name"`
+	Meta     map[string]any `json:"_meta,omitempty"`
+	Name     string         `json:"name"`
+	ServerID McpServerAcpId `json:"serverId"`
 }
 
 // McpServerAcpId **UNSTABLE**
@@ -1211,8 +1162,7 @@ type McpServerAcp struct {
 // Unique identifier for an MCP server using the ACP transport.
 //
 // The value is opaque and generated by the ACP component providing the MCP server. It is
-// used by `mcp/connect` to route connection requests back to the component that declared the
-// server.
+// used by `mcp/message` to route requests to the component that declared the server.
 type McpServerAcpId string
 
 // McpServerHttp hTTP transport configuration for MCP.
@@ -1249,13 +1199,14 @@ type MessageId string
 //
 // Notification parameters for `mcp/message`.
 //
-// This is used when the wrapped MCP message is a notification and the outer JSON-RPC
-// envelope has no `id`.
+// Sent by the provider to the consumer for an active request (including
+// subscription acknowledgements and updates); the outer envelope has no `id`.
 type MessageMcpNotification struct {
-	Meta         map[string]any  `json:"_meta,omitempty"`
-	ConnectionID McpConnectionId `json:"connectionId"`
-	Method       string          `json:"method"`
-	Params       map[string]any  `json:"params,omitempty"`
+	Meta      map[string]any `json:"_meta,omitempty"`
+	Method    string         `json:"method"`
+	Params    map[string]any `json:"params,omitempty"`
+	RequestID McpRequestId   `json:"requestId"`
+	ServerID  McpServerAcpId `json:"serverId"`
 }
 
 // MessageMcpRequest **UNSTABLE**
@@ -1264,28 +1215,40 @@ type MessageMcpNotification struct {
 //
 // Request parameters for `mcp/message`.
 type MessageMcpRequest struct {
-	Meta         map[string]any  `json:"_meta,omitempty"`
-	ConnectionID McpConnectionId `json:"connectionId"`
-	Method       string          `json:"method"`
-	Params       map[string]any  `json:"params,omitempty"`
+	Meta      map[string]any `json:"_meta,omitempty"`
+	Method    string         `json:"method"`
+	Params    map[string]any `json:"params,omitempty"`
+	RequestID McpRequestId   `json:"requestId"`
+	ServerID  McpServerAcpId `json:"serverId"`
 }
 
 // MessageMcpResponse **UNSTABLE**
 //
-// This capability is not part of the spec yet, and may be removed or changed at any point.
+// The successful outer ACP `mcp/message` response carries exactly one
+// inner MCP outcome: an opaque result (including JSON null), or an MCP error.
+// Outer ACP errors are reserved for binding and runtime failures.
 //
-// Response to `mcp/message`.
-//
-// This is the inner MCP response result payload. Any JSON value is valid.
-type MessageMcpResponse any
+// Both branches require their carrier key. An error must be a non-null object.
+// Unknown outer fields are ignored; inner result and error fields are preserved.
+// Carrier `_meta` is optional; null or invalid values are treated as absent.
+// Senders must include exactly one outcome; receivers prefer `result` if both are present.
+type MessageMcpResponse struct {
+	Meta   map[string]any `json:"_meta,omitempty"`
+	Error  *McpError      `json:"error,omitempty"`
+	Result any            `json:"result,omitempty"`
+}
 
 // MultiSelectItems items for a multi-select (array) property schema.
 type MultiSelectItems struct {
-	Meta  map[string]any         `json:"_meta,omitempty"`
-	AnyOf []EnumOption           `json:"anyOf,omitempty"`
-	Enum  []string               `json:"enum,omitempty"`
-	Type  *ElicitationStringType `json:"type,omitempty"`
+	Meta  map[string]any `json:"_meta,omitempty"`
+	AnyOf []EnumOption   `json:"anyOf,omitempty"`
+	Enum  []string       `json:"enum,omitempty"`
+	Type  *string        `json:"type,omitempty"`
 }
+
+const (
+	MultiSelectItemsTypeString = "string"
+)
 
 // MultiSelectPropertySchema schema for multi-select (array) properties in an elicitation form.
 type MultiSelectPropertySchema struct {
@@ -1391,11 +1354,11 @@ type NesEditHistoryEntry struct {
 
 // NesEditSuggestion a text edit suggestion.
 type NesEditSuggestion struct {
-	Meta           map[string]any `json:"_meta,omitempty"`
-	CursorPosition *Position      `json:"cursorPosition,omitempty"`
-	Edits          []NesTextEdit  `json:"edits"`
-	ID             string         `json:"id"`
-	URI            string         `json:"uri"`
+	Meta           map[string]any  `json:"_meta,omitempty"`
+	CursorPosition *Position       `json:"cursorPosition,omitempty"`
+	Edits          []NesTextEdit   `json:"edits"`
+	ID             NesSuggestionId `json:"id"`
+	URI            string          `json:"uri"`
 }
 
 // NesEventCapabilities event capabilities the agent can consume.
@@ -1419,10 +1382,10 @@ type NesJumpCapabilities struct {
 
 // NesJumpSuggestion a jump-to-location suggestion.
 type NesJumpSuggestion struct {
-	Meta     map[string]any `json:"_meta,omitempty"`
-	ID       string         `json:"id"`
-	Position Position       `json:"position"`
-	URI      string         `json:"uri"`
+	Meta     map[string]any  `json:"_meta,omitempty"`
+	ID       NesSuggestionId `json:"id"`
+	Position Position        `json:"position"`
+	URI      string          `json:"uri"`
 }
 
 // NesOpenFile an open file in the editor.
@@ -1482,11 +1445,11 @@ type NesRenameCapabilities struct {
 
 // NesRenameSuggestion a rename symbol suggestion.
 type NesRenameSuggestion struct {
-	Meta     map[string]any `json:"_meta,omitempty"`
-	ID       string         `json:"id"`
-	NewName  string         `json:"newName"`
-	Position Position       `json:"position"`
-	URI      string         `json:"uri"`
+	Meta     map[string]any  `json:"_meta,omitempty"`
+	ID       NesSuggestionId `json:"id"`
+	NewName  string          `json:"newName"`
+	Position Position        `json:"position"`
+	URI      string          `json:"uri"`
 }
 
 // NesRepository repository metadata for an NES session.
@@ -1504,12 +1467,12 @@ type NesSearchAndReplaceCapabilities struct {
 
 // NesSearchAndReplaceSuggestion a search-and-replace suggestion.
 type NesSearchAndReplaceSuggestion struct {
-	Meta    map[string]any `json:"_meta,omitempty"`
-	ID      string         `json:"id"`
-	IsRegex *bool          `json:"isRegex,omitempty"`
-	Replace string         `json:"replace"`
-	Search  string         `json:"search"`
-	URI     string         `json:"uri"`
+	Meta    map[string]any  `json:"_meta,omitempty"`
+	ID      NesSuggestionId `json:"id"`
+	IsRegex *bool           `json:"isRegex,omitempty"`
+	Replace string          `json:"replace"`
+	Search  string          `json:"search"`
+	URI     string          `json:"uri"`
 }
 
 // NesSuggestContext context attached to a suggestion request.
@@ -1525,17 +1488,17 @@ type NesSuggestContext struct {
 
 // NesSuggestion a suggestion returned by the agent.
 type NesSuggestion struct {
-	Meta           map[string]any `json:"_meta,omitempty"`
-	CursorPosition *Position      `json:"cursorPosition,omitempty"`
-	Edits          []NesTextEdit  `json:"edits,omitempty"`
-	ID             string         `json:"id"`
-	IsRegex        *bool          `json:"isRegex,omitempty"`
-	Kind           string         `json:"kind"`
-	NewName        *string        `json:"newName,omitempty"`
-	Position       *Position      `json:"position,omitempty"`
-	Replace        *string        `json:"replace,omitempty"`
-	Search         *string        `json:"search,omitempty"`
-	URI            string         `json:"uri"`
+	Meta           map[string]any  `json:"_meta,omitempty"`
+	CursorPosition *Position       `json:"cursorPosition,omitempty"`
+	Edits          []NesTextEdit   `json:"edits,omitempty"`
+	ID             NesSuggestionId `json:"id"`
+	IsRegex        *bool           `json:"isRegex,omitempty"`
+	Kind           string          `json:"kind"`
+	NewName        *string         `json:"newName,omitempty"`
+	Position       *Position       `json:"position,omitempty"`
+	Replace        *string         `json:"replace,omitempty"`
+	Search         *string         `json:"search,omitempty"`
+	URI            string          `json:"uri"`
 }
 
 const (
@@ -1544,6 +1507,9 @@ const (
 	NesSuggestionKindRename           = "rename"
 	NesSuggestionKindSearchAndReplace = "searchAndReplace"
 )
+
+// NesSuggestionId unique identifier for a next edit suggestion.
+type NesSuggestionId string
 
 // NesTextEdit a text edit within a suggestion.
 type NesTextEdit struct {
@@ -1595,6 +1561,47 @@ type NewSessionResponse struct {
 	Modes         *SessionModeState     `json:"modes,omitempty"`
 	SessionID     SessionId             `json:"sessionId"`
 }
+
+// Notice **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// Fire-and-forget advisory information for the user.
+//
+// Notices are live events rather than session history. Agents must not rely on
+// a notice being received, displayed, or seen by the user.
+// Agents MUST only send notices when the Client advertised
+// [`ClientSessionCapabilities::notices`]. Otherwise, Agents may use an agent
+// message when the information should still be surfaced to the user.
+//
+// See RFD: [Session Notices](https://agentclientprotocol.com/rfds/session-notices)
+type Notice struct {
+	Meta        map[string]any `json:"_meta,omitempty"`
+	Description *string        `json:"description,omitempty"`
+	Severity    NoticeSeverity `json:"severity"`
+	Title       string         `json:"title"`
+}
+
+// NoticeCapabilities **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// Client support for presenting live advisory notices to the user.
+type NoticeCapabilities struct {
+}
+
+// NoticeSeverity **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// Severity hint for a session notice.
+type NoticeSeverity string
+
+const (
+	NoticeSeverityInfo    NoticeSeverity = "info"
+	NoticeSeverityWarning NoticeSeverity = "warning"
+	NoticeSeverityError   NoticeSeverity = "error"
+)
 
 // NumberPropertySchema schema for number (floating-point) properties in an elicitation form.
 type NumberPropertySchema struct {
@@ -1693,9 +1700,9 @@ const (
 //
 // A plan represented by a file URI.
 type PlanFile struct {
-	Meta map[string]any `json:"_meta,omitempty"`
-	ID   PlanId         `json:"id"`
-	URI  string         `json:"uri"`
+	Meta   map[string]any `json:"_meta,omitempty"`
+	PlanID PlanId         `json:"planId"`
+	URI    string         `json:"uri"`
 }
 
 // PlanId **UNSTABLE**
@@ -1713,7 +1720,7 @@ type PlanId string
 type PlanItems struct {
 	Meta    map[string]any `json:"_meta,omitempty"`
 	Entries []PlanEntry    `json:"entries"`
-	ID      PlanId         `json:"id"`
+	PlanID  PlanId         `json:"planId"`
 }
 
 // PlanMarkdown **UNSTABLE**
@@ -1724,7 +1731,7 @@ type PlanItems struct {
 type PlanMarkdown struct {
 	Meta    map[string]any `json:"_meta,omitempty"`
 	Content string         `json:"content"`
-	ID      PlanId         `json:"id"`
+	PlanID  PlanId         `json:"planId"`
 }
 
 // PlanRemoved **UNSTABLE**
@@ -1733,8 +1740,8 @@ type PlanMarkdown struct {
 //
 // Removal notice for a plan identified by ID.
 type PlanRemoved struct {
-	Meta map[string]any `json:"_meta,omitempty"`
-	ID   PlanId         `json:"id"`
+	Meta   map[string]any `json:"_meta,omitempty"`
+	PlanID PlanId         `json:"planId"`
 }
 
 // PlanUpdate **UNSTABLE**
@@ -1756,7 +1763,7 @@ type PlanUpdateContent struct {
 	Meta    map[string]any `json:"_meta,omitempty"`
 	Content *string        `json:"content,omitempty"`
 	Entries []PlanEntry    `json:"entries,omitempty"`
-	ID      PlanId         `json:"id"`
+	PlanID  PlanId         `json:"planId"`
 	Type    string         `json:"type"`
 	URI     *string        `json:"uri,omitempty"`
 }
@@ -1843,17 +1850,24 @@ type ProviderCurrentConfig struct {
 	BaseURL string         `json:"baseUrl"`
 }
 
+// ProviderId **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// Unique identifier for a configurable LLM provider.
+type ProviderId string
+
 // ProviderInfo **UNSTABLE**
 //
 // This capability is not part of the spec yet, and may be removed or changed at any point.
 //
 // Information about a configurable LLM provider.
 type ProviderInfo struct {
-	Meta      map[string]any         `json:"_meta,omitempty"`
-	Current   *ProviderCurrentConfig `json:"current,omitempty"`
-	ID        string                 `json:"id"`
-	Required  bool                   `json:"required"`
-	Supported []LlmProtocol          `json:"supported"`
+	Meta       map[string]any         `json:"_meta,omitempty"`
+	Current    *ProviderCurrentConfig `json:"current,omitempty"`
+	ProviderID ProviderId             `json:"providerId"`
+	Required   bool                   `json:"required"`
+	Supported  []LlmProtocol          `json:"supported"`
 }
 
 // ProvidersCapabilities **UNSTABLE**
@@ -1862,7 +1876,7 @@ type ProviderInfo struct {
 //
 // Provider configuration capabilities supported by the agent.
 //
-// By supplying `{}` it means that the agent supports provider configuration methods.
+// Supplying `{}` means the agent supports provider configuration methods.
 type ProvidersCapabilities struct {
 	Meta map[string]any `json:"_meta,omitempty"`
 }
@@ -1894,7 +1908,7 @@ type ReadTextFileResponse struct {
 // RejectNesNotification notification sent when a suggestion is rejected.
 type RejectNesNotification struct {
 	Meta      map[string]any   `json:"_meta,omitempty"`
-	ID        string           `json:"id"`
+	ID        NesSuggestionId  `json:"id"`
 	Reason    *NesRejectReason `json:"reason,omitempty"`
 	SessionID SessionId        `json:"sessionId"`
 }
@@ -1952,6 +1966,11 @@ type RequestPermissionResponse struct {
 	Outcome RequestPermissionOutcome `json:"outcome"`
 }
 
+// RequiresActionStateUpdate foreground work is blocked on user action.
+type RequiresActionStateUpdate struct {
+	Meta map[string]any `json:"_meta,omitempty"`
+}
+
 // ResourceLink a resource that the server is capable of reading, included in a prompt or tool call result.
 type ResourceLink struct {
 	Meta        map[string]any `json:"_meta,omitempty"`
@@ -1993,6 +2012,11 @@ const (
 	RoleUser      Role = "user"
 )
 
+// RunningStateUpdate foreground work is in progress.
+type RunningStateUpdate struct {
+	Meta map[string]any `json:"_meta,omitempty"`
+}
+
 // SelectedPermissionOutcome the user selected one of the provided options.
 type SelectedPermissionOutcome struct {
 	Meta     map[string]any     `json:"_meta,omitempty"`
@@ -2001,11 +2025,22 @@ type SelectedPermissionOutcome struct {
 
 // SessionAdditionalDirectoriesCapabilities capabilities for additional session directories support.
 //
-// By supplying `{}` it means that the agent supports the `additionalDirectories`
-// field on supported session lifecycle requests. Agents that also support
+// Supplying `{}` means the agent supports the `additionalDirectories` field on
+// supported session lifecycle requests. Agents that also support
 // `session/list` may return `SessionInfo.additionalDirectories` to report the
 // complete ordered additional-root list associated with a listed session.
 type SessionAdditionalDirectoriesCapabilities struct {
+	Meta map[string]any `json:"_meta,omitempty"`
+}
+
+// SessionCancelCapabilities **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// Capability to cancel work in a subagent session without ending that session.
+//
+// Supplying `{}` advertises support; an omitted or `null` `cancel` does not.
+type SessionCancelCapabilities struct {
 	Meta map[string]any `json:"_meta,omitempty"`
 }
 
@@ -2030,16 +2065,12 @@ type SessionCapabilities struct {
 
 // SessionCloseCapabilities capabilities for the `session/close` method.
 //
-// By supplying `{}` it means that the agent supports closing of sessions.
+// Supplying `{}` means the agent supports closing sessions.
 type SessionCloseCapabilities struct {
 	Meta map[string]any `json:"_meta,omitempty"`
 }
 
-// SessionConfigBoolean **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// A boolean on/off toggle session configuration option payload.
+// SessionConfigBoolean a boolean on/off toggle session configuration option payload.
 type SessionConfigBoolean struct {
 	CurrentValue bool `json:"currentValue"`
 }
@@ -2085,11 +2116,7 @@ const (
 	SessionConfigOptionCategoryThoughtLevel SessionConfigOptionCategory = "thought_level"
 )
 
-// SessionConfigOptionsCapabilities **UNSTABLE**
-//
-// This capability is not part of the spec yet, and may be removed or changed at any point.
-//
-// Session configuration option capabilities supported by the client.
+// SessionConfigOptionsCapabilities session configuration option capabilities supported by the client.
 type SessionConfigOptionsCapabilities struct {
 	Meta    map[string]any                   `json:"_meta,omitempty"`
 	Boolean *BooleanConfigOptionCapabilities `json:"boolean,omitempty"`
@@ -2136,7 +2163,7 @@ type SessionDeleteCapabilities struct {
 //
 // Capabilities for the `session/fork` method.
 //
-// By supplying `{}` it means that the agent supports forking of sessions.
+// Supplying `{}` means the agent supports forking sessions.
 type SessionForkCapabilities struct {
 	Meta map[string]any `json:"_meta,omitempty"`
 }
@@ -2171,9 +2198,35 @@ type SessionInfoUpdate struct {
 
 // SessionListCapabilities capabilities for the `session/list` method.
 //
-// By supplying `{}` it means that the agent supports listing of sessions.
+// Supplying `{}` means the agent supports listing sessions.
 type SessionListCapabilities struct {
 	Meta map[string]any `json:"_meta,omitempty"`
+}
+
+// SessionMessage **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// An upsert for an inter-session message.
+type SessionMessage struct {
+	Meta               map[string]any `json:"_meta,omitempty"`
+	Content            []ContentBlock `json:"content,omitempty"`
+	MessageID          MessageId      `json:"messageId"`
+	RecipientSessionID *SessionId     `json:"recipientSessionId,omitempty"`
+	SenderSessionID    *SessionId     `json:"senderSessionId,omitempty"`
+}
+
+// SessionMessageChunk **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// A streamed content block of an inter-session message.
+type SessionMessageChunk struct {
+	Meta               map[string]any `json:"_meta,omitempty"`
+	Content            ContentBlock   `json:"content"`
+	MessageID          MessageId      `json:"messageId"`
+	RecipientSessionID *SessionId     `json:"recipientSessionId,omitempty"`
+	SenderSessionID    *SessionId     `json:"senderSessionId,omitempty"`
 }
 
 // SessionMode a mode the agent can operate in.
@@ -2209,7 +2262,7 @@ type SessionNotification struct {
 
 // SessionResumeCapabilities capabilities for the `session/resume` method.
 //
-// By supplying `{}` it means that the agent supports resuming of sessions.
+// Supplying `{}` means the agent supports resuming sessions.
 type SessionResumeCapabilities struct {
 	Meta map[string]any `json:"_meta,omitempty"`
 }
@@ -2220,39 +2273,56 @@ type SessionResumeCapabilities struct {
 //
 // See protocol docs: [Agent Reports Output](https://agentclientprotocol.com/protocol/prompt-turn#3-agent-reports-output)
 type SessionUpdate struct {
-	Meta              map[string]any        `json:"_meta,omitempty"`
-	AvailableCommands []AvailableCommand    `json:"availableCommands,omitempty"`
-	ConfigOptions     []SessionConfigOption `json:"configOptions,omitempty"`
-	Content           any                   `json:"content,omitempty"`
-	Cost              *Cost                 `json:"cost,omitempty"`
-	CurrentModeID     *SessionModeId        `json:"currentModeId,omitempty"`
-	Entries           []PlanEntry           `json:"entries,omitempty"`
-	ID                *PlanId               `json:"id,omitempty"`
-	Kind              *ToolKind             `json:"kind,omitempty"`
-	Locations         []ToolCallLocation    `json:"locations,omitempty"`
-	MessageID         *MessageId            `json:"messageId,omitempty"`
-	Plan              *PlanUpdateContent    `json:"plan,omitempty"`
-	RawInput          any                   `json:"rawInput,omitempty"`
-	RawOutput         any                   `json:"rawOutput,omitempty"`
-	SessionUpdate     string                `json:"sessionUpdate"`
-	Size              *uint64               `json:"size,omitempty"`
-	Status            *ToolCallStatus       `json:"status,omitempty"`
-	Title             *string               `json:"title,omitempty"`
-	ToolCallID        *ToolCallId           `json:"toolCallId,omitempty"`
-	UpdatedAt         *string               `json:"updatedAt,omitempty"`
-	Used              *uint64               `json:"used,omitempty"`
+	Meta               map[string]any               `json:"_meta,omitempty"`
+	AvailableCommands  []AvailableCommand           `json:"availableCommands,omitempty"`
+	Capabilities       *SubagentSessionCapabilities `json:"capabilities,omitempty"`
+	CompactionID       *CompactionId                `json:"compactionId,omitempty"`
+	ConfigOptions      []SessionConfigOption        `json:"configOptions,omitempty"`
+	Content            any                          `json:"content,omitempty"`
+	Cost               *Cost                        `json:"cost,omitempty"`
+	CurrentModeID      *SessionModeId               `json:"currentModeId,omitempty"`
+	Description        *string                      `json:"description,omitempty"`
+	Entries            []PlanEntry                  `json:"entries,omitempty"`
+	Error              *string                      `json:"error,omitempty"`
+	Kind               *ToolKind                    `json:"kind,omitempty"`
+	Locations          []ToolCallLocation           `json:"locations,omitempty"`
+	MessageID          *MessageId                   `json:"messageId,omitempty"`
+	Name               *string                      `json:"name,omitempty"`
+	Plan               *PlanUpdateContent           `json:"plan,omitempty"`
+	PlanID             *PlanId                      `json:"planId,omitempty"`
+	RawInput           any                          `json:"rawInput,omitempty"`
+	RawOutput          any                          `json:"rawOutput,omitempty"`
+	RecipientSessionID *SessionId                   `json:"recipientSessionId,omitempty"`
+	SenderSessionID    *SessionId                   `json:"senderSessionId,omitempty"`
+	SessionID          *SessionId                   `json:"sessionId,omitempty"`
+	SessionUpdate      string                       `json:"sessionUpdate"`
+	Severity           *NoticeSeverity              `json:"severity,omitempty"`
+	Size               *uint64                      `json:"size,omitempty"`
+	State              *StateUpdate                 `json:"state,omitempty"`
+	Status             *string                      `json:"status,omitempty"`
+	Summary            []ContentBlock               `json:"summary,omitempty"`
+	Title              *string                      `json:"title,omitempty"`
+	ToolCallID         *ToolCallId                  `json:"toolCallId,omitempty"`
+	UpdatedAt          *string                      `json:"updatedAt,omitempty"`
+	Used               *uint64                      `json:"used,omitempty"`
 }
 
 const (
 	SessionUpdateAgentMessageChunk       = "agent_message_chunk"
 	SessionUpdateAgentThoughtChunk       = "agent_thought_chunk"
 	SessionUpdateAvailableCommandsUpdate = "available_commands_update"
+	SessionUpdateCompactionSummaryChunk  = "compaction_summary_chunk"
+	SessionUpdateCompactionUpdate        = "compaction_update"
 	SessionUpdateConfigOptionUpdate      = "config_option_update"
 	SessionUpdateCurrentModeUpdate       = "current_mode_update"
+	SessionUpdateNotice                  = "notice"
 	SessionUpdatePlan                    = "plan"
 	SessionUpdatePlanRemoved             = "plan_removed"
 	SessionUpdatePlanUpdate              = "plan_update"
 	SessionUpdateSessionInfoUpdate       = "session_info_update"
+	SessionUpdateSessionMessage          = "session_message"
+	SessionUpdateSessionMessageChunk     = "session_message_chunk"
+	SessionUpdateSubagentUpdate          = "subagent_update"
 	SessionUpdateToolCall                = "tool_call"
 	SessionUpdateToolCallUpdate          = "tool_call_update"
 	SessionUpdateUsageUpdate             = "usage_update"
@@ -2265,13 +2335,13 @@ const (
 //
 // Request parameters for `providers/set`.
 //
-// Replaces the full configuration for one provider id.
+// Replaces the full configuration for one provider ID.
 type SetProviderRequest struct {
-	Meta    map[string]any `json:"_meta,omitempty"`
-	APIType LlmProtocol    `json:"apiType"`
-	BaseURL string         `json:"baseUrl"`
-	Headers RawMessage     `json:"headers,omitempty"`
-	ID      string         `json:"id"`
+	Meta       map[string]any    `json:"_meta,omitempty"`
+	APIType    LlmProtocol       `json:"apiType"`
+	BaseURL    string            `json:"baseUrl"`
+	Headers    map[string]string `json:"headers,omitempty"`
+	ProviderID ProviderId        `json:"providerId"`
 }
 
 // SetProviderResponse **UNSTABLE**
@@ -2328,6 +2398,29 @@ type StartNesResponse struct {
 	SessionID SessionId      `json:"sessionId"`
 }
 
+// StateUpdate **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// Current foreground-work state of a reusable child session.
+//
+// Each update is a whole-object snapshot. Idle does not terminate the child;
+// the parent can message it again, transitioning it back to running.
+// Background activity may still emit other session updates while idle.
+type StateUpdate struct {
+	Meta       map[string]any `json:"_meta,omitempty"`
+	State      string         `json:"state"`
+	StopReason *StopReason    `json:"stopReason,omitempty"`
+	Usage      *Usage         `json:"usage,omitempty"`
+}
+
+const (
+	StateUpdateStateIdle           = "idle"
+	StateUpdateStateRequiresAction = "requires_action"
+	StateUpdateStateRunning        = "running"
+	StateUpdateStateUnknown        = "unknown"
+)
+
 // StopReason reasons why an agent stops processing a prompt turn.
 //
 // See protocol docs: [Stop Reasons](https://agentclientprotocol.com/protocol/prompt-turn#stop-reasons)
@@ -2351,6 +2444,12 @@ const (
 	StringFormatDateTime StringFormat = "date-time"
 )
 
+// StringMultiSelectItems string item schema for multi-select enum properties.
+type StringMultiSelectItems struct {
+	Meta map[string]any `json:"_meta,omitempty"`
+	Enum []string       `json:"enum"`
+}
+
 // StringPropertySchema schema for string properties in an elicitation form.
 //
 // When `enum` or `oneOf` is set, this represents a single-select enum
@@ -2366,6 +2465,65 @@ type StringPropertySchema struct {
 	OneOf       []EnumOption   `json:"oneOf,omitempty"`
 	Pattern     *string        `json:"pattern,omitempty"`
 	Title       *string        `json:"title,omitempty"`
+}
+
+// SubagentCapabilities **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// Capability marker for exposing reusable child sessions as restricted ACP sessions.
+//
+// Supplying `{}` advertises support for child association and state updates,
+// session-directed messages, and restricted-session semantics. The client
+// must advertise this capability before the agent sends subagent updates or
+// session-directed messages.
+type SubagentCapabilities struct {
+	Meta map[string]any `json:"_meta,omitempty"`
+}
+
+// SubagentSessionCapabilities **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// Client-initiated session mutations permitted for a specific subagent session.
+//
+// A mutation requires an explicit per-child capability; support for the method
+// on ordinary sessions does not grant support on a child.
+type SubagentSessionCapabilities struct {
+	Meta   map[string]any             `json:"_meta,omitempty"`
+	Cancel *SessionCancelCapabilities `json:"cancel,omitempty"`
+}
+
+// SubagentUpdate **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// Notification that the enclosing parent session created and owns a child session.
+//
+// Later updates modify the existing association's metadata, not its ownership.
+//
+// Sent on the immediate parent session. The first update for an unknown
+// [`SubagentUpdate::session_id`] announces the child and MUST be sent
+// before any live child traffic or live message naming the child as sender
+// or recipient. Parents may message and reuse an announced child across
+// multiple operations.
+// Child events are delivered automatically on the same connection; no child
+// load, resume, or subscription is needed.
+//
+// Only the subagent session ID is required. Omitted patch fields keep their
+// previous values; `null` clears them. Clearing capabilities disables child
+// mutations. Clearing state leaves current activity unset/unconfirmed: it does
+// not imply idle, stop work, or create an `unknown` state snapshot. A concrete
+// state replaces the entire previous state object, not the session.
+// The title and description provide the parent's display metadata for the
+// child. They do not replace the content of individual messages or operations.
+type SubagentUpdate struct {
+	Meta         map[string]any               `json:"_meta,omitempty"`
+	Capabilities *SubagentSessionCapabilities `json:"capabilities,omitempty"`
+	Description  *string                      `json:"description,omitempty"`
+	SessionID    SessionId                    `json:"sessionId"`
+	State        *StateUpdate                 `json:"state,omitempty"`
+	Title        *string                      `json:"title,omitempty"`
 }
 
 // SuggestNesRequest request for a code suggestion.
@@ -2471,6 +2629,7 @@ type ToolCall struct {
 	Content    []ToolCallContent  `json:"content,omitempty"`
 	Kind       *ToolKind          `json:"kind,omitempty"`
 	Locations  []ToolCallLocation `json:"locations,omitempty"`
+	Name       *string            `json:"name,omitempty"`
 	RawInput   any                `json:"rawInput,omitempty"`
 	RawOutput  any                `json:"rawOutput,omitempty"`
 	Status     *ToolCallStatus    `json:"status,omitempty"`
@@ -2540,6 +2699,7 @@ type ToolCallUpdate struct {
 	Content    []ToolCallContent  `json:"content,omitempty"`
 	Kind       *ToolKind          `json:"kind,omitempty"`
 	Locations  []ToolCallLocation `json:"locations,omitempty"`
+	Name       *string            `json:"name,omitempty"`
 	RawInput   any                `json:"rawInput,omitempty"`
 	RawOutput  any                `json:"rawOutput,omitempty"`
 	Status     *ToolCallStatus    `json:"status,omitempty"`
@@ -2568,17 +2728,27 @@ const (
 	ToolKindOther      ToolKind = "other"
 )
 
+// UnknownStateUpdate **UNSTABLE**
+//
+// This capability is not part of the spec yet, and may be removed or changed at any point.
+//
+// The Agent cannot currently determine foreground activity.
+//
+// Report this when activity becomes unobservable, not merely because the child
+// has been quiet. The Client MUST stop presenting the previous state as confirmed
+// current activity, but may retain it as last known. A later state replaces this
+// snapshot normally.
+//
+// This is not a task outcome or session closure. It does not cancel work, resolve
+// pending requests, or revoke capabilities; capabilities are updated separately.
+type UnknownStateUpdate struct {
+	Meta map[string]any `json:"_meta,omitempty"`
+}
+
 // UnstructuredCommandInput all text that was typed after the command name is provided as input.
 type UnstructuredCommandInput struct {
 	Meta map[string]any `json:"_meta,omitempty"`
 	Hint string         `json:"hint"`
-}
-
-// UntitledMultiSelectItems items definition for untitled multi-select enum properties.
-type UntitledMultiSelectItems struct {
-	Meta map[string]any        `json:"_meta,omitempty"`
-	Enum []string              `json:"enum"`
-	Type ElicitationStringType `json:"type"`
 }
 
 // Usage **UNSTABLE**

@@ -468,8 +468,11 @@ func (g *generator) mergedPropertyType(schemas []schema, required bool) string {
 			continue
 		}
 		if chosen.Type != info.Type {
-			if scalarCompatible(chosen.Type, info.Type) {
-				chosen.Type = scalarCommon(chosen.Type, info.Type)
+			// Variants that share a property name but use different named
+			// scalars (e.g. tool call vs compaction `status`) collapse to their
+			// common underlying type instead of losing typing entirely.
+			if common := scalarCommon(g.scalarBase(chosen.Type), g.scalarBase(info.Type)); common != "" {
+				chosen.Type = common
 				chosen.Kind = kindScalar
 			} else {
 				chosen = typeInfo{Type: "any", Kind: kindAny}
@@ -479,8 +482,15 @@ func (g *generator) mergedPropertyType(schemas []schema, required bool) string {
 	return applyOptional(chosen, required)
 }
 
-func scalarCompatible(a, b string) bool {
-	return scalarCommon(a, b) != ""
+// scalarBase returns the underlying Go type of a named scalar definition, or
+// typ unchanged.
+func (g *generator) scalarBase(typ string) string {
+	if s, ok := g.defs[typ]; ok {
+		if info, ok := g.scalarUnion(s); ok {
+			return info.base
+		}
+	}
+	return typ
 }
 
 func scalarCommon(a, b string) string {
@@ -567,8 +577,14 @@ func (g *generator) typeInfoForSchema(s schema) typeInfo {
 		item := g.typeInfoForSchema(toSchema(s["items"]))
 		return typeInfo{Type: "[]" + item.Type, Kind: kindSlice}
 	case "object":
-		if hasAdditionalProperties(s) && len(asSchemaMap(s["properties"])) == 0 {
-			return typeInfo{Type: "map[string]any", Kind: kindMap}
+		if len(asSchemaMap(s["properties"])) == 0 {
+			if hasAdditionalProperties(s) {
+				return typeInfo{Type: "map[string]any", Kind: kindMap}
+			}
+			// A map whose values all follow one schema.
+			if values, ok := s["additionalProperties"].(map[string]any); ok {
+				return typeInfo{Type: "map[string]" + g.typeInfoForSchema(toSchema(values)).Type, Kind: kindMap}
+			}
 		}
 		return typeInfo{Type: "RawMessage", Kind: kindAny}
 	case "null":

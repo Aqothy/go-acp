@@ -70,8 +70,11 @@ func (c *ClientPeer) Notify(ctx context.Context, method schema.Method, params an
 	return c.caller.notify(ctx, method, params)
 }
 
+// SessionUpdate streams an update to the client. It is sent even when ctx is
+// already cancelled: after session/cancel the protocol expects the agent to
+// flush pending updates before answering the prompt.
 func (c *ClientPeer) SessionUpdate(ctx context.Context, notification schema.SessionNotification) error {
-	return c.Notify(ctx, schema.ClientMethodSessionUpdate, notification)
+	return c.Notify(context.WithoutCancel(ctx), schema.ClientMethodSessionUpdate, notification)
 }
 
 func (c *ClientPeer) RequestPermission(ctx context.Context, request schema.RequestPermissionRequest) (schema.RequestPermissionResponse, error) {
@@ -104,6 +107,17 @@ func (c *ClientPeer) KillTerminal(ctx context.Context, request schema.KillTermin
 
 func (c *ClientPeer) ReleaseTerminal(ctx context.Context, request schema.ReleaseTerminalRequest) (schema.ReleaseTerminalResponse, error) {
 	return requestValue[schema.ReleaseTerminalResponse](ctx, c.caller, schema.ClientMethodTerminalRelease, request)
+}
+
+// CreateElicitation asks the client to collect structured input from the user,
+// through a form or by opening a URL.
+func (c *ClientPeer) CreateElicitation(ctx context.Context, request schema.CreateElicitationRequest) (schema.CreateElicitationResponse, error) {
+	return requestValue[schema.CreateElicitationResponse](ctx, c.caller, schema.ClientMethodElicitationCreate, request)
+}
+
+// CompleteElicitation tells the client a URL-mode elicitation has finished.
+func (c *ClientPeer) CompleteElicitation(ctx context.Context, notification schema.CompleteElicitationNotification) error {
+	return c.Notify(ctx, schema.ClientMethodElicitationComplete, notification)
 }
 
 // AgentPeer is the client's handle for calling into the agent.

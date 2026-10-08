@@ -2,7 +2,7 @@ package acp
 
 import "github.com/Aqothy/go-acp/schema"
 
-// Typed registration for the stable ACP methods
+// Typed registration for the stable ACP methods, mirroring the TypeScript
 // SDK's onRequest/onNotification keys. Each is sugar over RegisterAgentRequest
 // / RegisterClientRequest with the method constant and its schema types filled
 // in, so handlers get full type inference and calls chain:
@@ -13,9 +13,15 @@ import "github.com/Aqothy/go-acp/schema"
 //		OnPrompt(handlePrompt).
 //		OnCancel(handleCancel)
 //
-// Unstable methods (session/fork, providers/*, nes/*, document/*,
-// elicitation/*) have no typed sugar; register them with RegisterAgentRequest
-// or RegisterClientRequest and the schema.AgentMethod*/ClientMethod* constant.
+// Unstable methods (session/fork, providers/*, nes/*, document/*, mcp/*) have
+// no typed sugar; register them with RegisterAgentRequest or
+// RegisterClientRequest and the schema.AgentMethod*/ClientMethod* constant.
+//
+// Request handlers run concurrently with later messages; notification handlers
+// run one at a time in wire order. Notifications without a handler are
+// ignored. A session/prompt handler's ctx is cancelled (cause
+// ErrSessionCancelled) when session/cancel arrives for its session, so OnCancel
+// is only needed for extra bookkeeping.
 
 func (app *AgentApp) OnInitialize(handler AgentRequestHandler[schema.InitializeRequest, schema.InitializeResponse]) *AgentApp {
 	return RegisterAgentRequest(app, schema.AgentMethodInitialize, handler)
@@ -103,4 +109,12 @@ func (app *ClientApp) OnKillTerminal(handler ClientRequestHandler[schema.KillTer
 
 func (app *ClientApp) OnReleaseTerminal(handler ClientRequestHandler[schema.ReleaseTerminalRequest, schema.ReleaseTerminalResponse]) *ClientApp {
 	return RegisterClientRequest(app, schema.ClientMethodTerminalRelease, handler)
+}
+
+func (app *ClientApp) OnCreateElicitation(handler ClientRequestHandler[schema.CreateElicitationRequest, schema.CreateElicitationResponse]) *ClientApp {
+	return RegisterClientRequest(app, schema.ClientMethodElicitationCreate, handler)
+}
+
+func (app *ClientApp) OnCompleteElicitation(handler ClientNotificationHandler[schema.CompleteElicitationNotification]) *ClientApp {
+	return RegisterClientNotification(app, schema.ClientMethodElicitationComplete, handler)
 }

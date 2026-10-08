@@ -2,21 +2,23 @@ package acp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
+	"github.com/Aqothy/go-acp/schema"
 	"github.com/Aqothy/jsonrpc2"
 )
 
+// Wire error codes, from schema.ErrorCode.
 const (
-	CodeParseError       int64 = -32700
-	CodeInvalidRequest   int64 = -32600
-	CodeMethodNotFound   int64 = -32601
-	CodeInvalidParams    int64 = -32602
-	CodeInternalError    int64 = -32603
-	CodeRequestCancelled int64 = -32800
-	CodeAuthentication   int64 = -32000
-	CodeResourceNotFound int64 = -32002
-	CodeURLElicitation   int64 = -32042
+	CodeParseError       = int64(schema.ErrorCodeParseError)
+	CodeInvalidRequest   = int64(schema.ErrorCodeInvalidRequest)
+	CodeMethodNotFound   = int64(schema.ErrorCodeMethodNotFound)
+	CodeInvalidParams    = int64(schema.ErrorCodeInvalidParams)
+	CodeInternalError    = int64(schema.ErrorCodeInternalError)
+	CodeRequestCancelled = int64(schema.ErrorCodeRequestCancelled)
+	CodeAuthentication   = int64(schema.ErrorCodeAuthenticationRequired)
+	CodeResourceNotFound = int64(schema.ErrorCodeResourceNotFound)
 )
 
 // RPCError creates a JSON-RPC wire error with optional JSON-marshaled data.
@@ -52,4 +54,9 @@ func ResourceNotFoundError(uri string) error {
 		return RPCError(CodeResourceNotFound, "Resource not found", nil)
 	}
 	return RPCError(CodeResourceNotFound, "Resource not found: "+uri, map[string]any{"uri": uri})
+}
+
+func isRequestCancelled(err error) bool {
+	var wire *jsonrpc2.WireError
+	return errors.As(err, &wire) && wire.Code == CodeRequestCancelled
 }

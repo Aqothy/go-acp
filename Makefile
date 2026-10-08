@@ -1,4 +1,4 @@
-RELEASE ?= schema-v1.17.0
+RELEASE ?= schema-v1.24.1
 ACP_RELEASE_BASE_URL ?= https://github.com/agentclientprotocol/agent-client-protocol/releases/download
 
 SCHEMA_DIR := schema

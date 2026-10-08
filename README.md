@@ -6,6 +6,9 @@ Go SDK for the [Agent Client Protocol](https://agentclientprotocol.com) (ACP)
 - typed, chainable handler registration for agents and clients
 - streaming session helpers (`ActiveSession`) with guaranteed update/response ordering
 - protocol-level cancellation (`$/cancel_request`) in both directions
+- concurrent request handling: a handler waiting on the user (permission,
+  elicitation) never blocks the rest of the connection, while notifications
+  are still handled one at a time in wire order
 - stdio (newline-delimited JSON) and WebSocket transports, backed by [`github.com/Aqothy/jsonrpc2`](https://github.com/Aqothy/jsonrpc2)
 
 HTTP and SSE transports are not included (yet).
@@ -45,8 +48,8 @@ if err != nil {
 <-conn.Done()
 ```
 
-`On*` methods cover the stable ACP surface. Unstable methods (`session/fork`,
-`providers/*`, `nes/*`, `document/*`, `elicitation/*`) register through
+`On*` methods cover the stable ACP surface, including elicitation. Unstable
+methods (`session/fork`, `providers/*`, `nes/*`, `document/*`, `mcp/*`) register through
 `acp.RegisterAgentRequest`/`acp.RegisterClientRequest` with any
 `schema.AgentMethod*`/`schema.ClientMethod*` constant — the same mechanism the
 `On*` sugar uses.
@@ -79,6 +82,31 @@ err = conn.Agent().BuildSession("/path/to/project").WithSession(ctx, func(ctx co
 	return err
 })
 ```
+
+## Handler concurrency
+
+Each request handler runs on its own goroutine, started in wire order after
+every earlier message has been dispatched. Notification handlers run one at a
+time in wire order, so `session/update` handlers see updates in sequence.
+Notifications without a handler (including `_`-prefixed extensions) are
+ignored. A handler whose context was cancelled by the peer's
+`$/cancel_request` and returns `ctx.Err()` is answered with `RequestCancelled`
+(-32800).
+
+On the agent side, `session/cancel` cancels the context of that session's
+in-flight `session/prompt` handler (cause `acp.ErrSessionCancelled`), even if
+the cancel arrives before the handler starts running. The handler just watches
+`ctx.Done()`; `SessionUpdate` still delivers the updates it flushes afterwards,
+and an error returned after the cancel is answered with `stopReason:
+"cancelled"`, as the protocol requires.
+
+`Close` cancels in-flight handlers and fails calls still awaiting the peer, so
+it never hangs on an unresponsive peer. Losing the transport cancels in-flight
+handlers too.
+
+Incoming newline-delimited messages are capped at 32 MiB; change it with
+`AppOptions.MaxMessageBytes`. WebSocket adapters should set their own read
+limit (e.g. `(*websocket.Conn).SetReadLimit`).
 
 ## Transports
 
@@ -123,7 +151,7 @@ make schema
 To pin a newer release:
 
 ```sh
-make schema RELEASE=schema-v1.18.0
+make schema RELEASE=schema-v1.25.0
 make check
 ```
 
