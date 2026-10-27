@@ -2,11 +2,13 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/Aqothy/go-acp/schema"
+	"github.com/Aqothy/jsonrpc2"
 )
 
 var ErrActiveSessionClosed = errors.New("active ACP session closed")
@@ -210,11 +212,7 @@ func (b *SessionBuilder) WithMCPServer(server schema.McpServer) *SessionBuilder 
 }
 
 func (b *SessionBuilder) Start(ctx context.Context) (*ActiveSession, error) {
-	resp, err := b.agent.NewSession(ctx, b.Request())
-	if err != nil {
-		return nil, err
-	}
-	return b.agent.attachSession(resp), nil
+	return b.agent.StartSession(ctx, b.Request())
 }
 
 // WithSession starts the session, runs op, and disposes the session when op returns.
@@ -240,6 +238,43 @@ func (c *AgentPeer) attachSession(resp schema.NewSessionResponse) *ActiveSession
 	s := &ActiveSession{agent: c, response: resp, updates: updates}
 	s.detach = c.conn.router.attach(resp.SessionID, updates)
 	return s
+}
+
+// StartSession creates a session and subscribes to its session/update stream
+// as the agent's answer is read, so updates the agent sends right after
+// answering (commands, modes, config options) reach the session.
+func (c *AgentPeer) StartSession(ctx context.Context, request schema.NewSessionRequest) (*ActiveSession, error) {
+	var (
+		mu        sync.Mutex
+		session   *ActiveSession
+		decodeErr error
+		abandoned bool
+	)
+	call := c.caller.callThen(ctx, schema.AgentMethodSessionNew, request, func(response *jsonrpc2.Response) {
+		if response.Error != nil {
+			return
+		}
+		var resp schema.NewSessionResponse
+		mu.Lock()
+		defer mu.Unlock()
+		if decodeErr = json.Unmarshal(response.Result, &resp); decodeErr == nil && !abandoned {
+			session = c.attachSession(resp)
+		}
+	})
+	err := c.caller.await(ctx, call, nil)
+	mu.Lock()
+	defer mu.Unlock()
+	if err == nil {
+		err = decodeErr
+	}
+	if err != nil {
+		abandoned = true
+		if session != nil {
+			session.Dispose()
+		}
+		return nil, err
+	}
+	return session, nil
 }
 
 // AttachSession attaches to an existing session by id, subscribing to its

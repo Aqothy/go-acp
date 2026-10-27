@@ -1,10 +1,12 @@
 package acp_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"runtime"
 	"sync"
 	"testing"
@@ -532,5 +534,56 @@ func TestCloseDoesNotWaitForAbandonedCall(t *testing.T) {
 	case <-closed:
 	case <-ctx.Done():
 		t.Fatal("Close hung waiting for the abandoned call")
+	}
+}
+
+// Updates an agent sends with its answer to session/new (its commands, say)
+// reach the started session, however the caller is scheduled.
+func TestStartSessionKeepsUpdatesSentWithTheAnswer(t *testing.T) {
+	// One P: the read loop handles the update before the woken caller runs.
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	clientEnd, agentEnd := net.Pipe()
+	defer agentEnd.Close()
+	conn, err := acp.Client().Connect(ctx, clientEnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	type started struct {
+		session *acp.ActiveSession
+		err     error
+	}
+	result := make(chan started, 1)
+	go func() {
+		session, err := conn.Agent().StartSession(ctx, schema.NewSessionRequest{CWD: "/tmp/project", MCPServers: []schema.McpServer{}})
+		result <- started{session, err}
+	}()
+	line, err := bufio.NewReader(agentEnd).ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+	}
+	if err := json.Unmarshal(line, &request); err != nil || request.Method != "session/new" {
+		t.Fatalf("request = %s, %v", line, err)
+	}
+	answer := `{"jsonrpc":"2.0","id":` + string(request.ID) + `,"result":{"sessionId":"s1"}}` + "\n" +
+		`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"available_commands_update","availableCommands":[]}}}` + "\n"
+	if _, err := io.WriteString(agentEnd, answer); err != nil {
+		t.Fatal(err)
+	}
+	got := <-result
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	defer got.session.Dispose()
+	message, err := got.session.NextUpdate(ctx)
+	if err != nil || message.Update.SessionUpdate != schema.SessionUpdateAvailableCommandsUpdate {
+		t.Fatalf("first update = %#v, %v; want the commands sent with the answer", message, err)
 	}
 }

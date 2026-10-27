@@ -21,7 +21,13 @@ func (c rpcCaller) request(ctx context.Context, method schema.Method, params any
 }
 
 func (c rpcCaller) call(ctx context.Context, method schema.Method, params any) *jsonrpc2.PendingCall {
-	return c.conn.Call(context.WithoutCancel(ctx), string(method), params)
+	return c.callThen(ctx, method, params, nil)
+}
+
+// callThen is call with onResponse run on the read loop as the response
+// arrives, before any later message is read.
+func (c rpcCaller) callThen(ctx context.Context, method schema.Method, params any, onResponse func(*jsonrpc2.Response)) *jsonrpc2.PendingCall {
+	return c.conn.CallThen(context.WithoutCancel(ctx), string(method), params, onResponse)
 }
 
 func (c rpcCaller) await(ctx context.Context, call *jsonrpc2.PendingCall, result any) error {
@@ -148,6 +154,9 @@ func (c *AgentPeer) Initialize(ctx context.Context, request schema.InitializeReq
 	return requestValue[schema.InitializeResponse](ctx, c.caller, schema.AgentMethodInitialize, request)
 }
 
+// NewSession creates a session. The agent may send the session's first
+// updates as soon as it answers, before AttachSession could subscribe to
+// them; StartSession subscribes as the answer is read, so none is missed.
 func (c *AgentPeer) NewSession(ctx context.Context, request schema.NewSessionRequest) (schema.NewSessionResponse, error) {
 	return requestValue[schema.NewSessionResponse](ctx, c.caller, schema.AgentMethodSessionNew, request)
 }
